@@ -28,25 +28,39 @@ class NetworkFeatures:
         Returns:
             The loaded network from sknetwork
         """
-        # NOTE: there are 92650947 edges in the big network we give you. However,
-        # do not hard code this value here, as it will cause the auto-grader tests
-        # to break
-
-        # NOTE: Trying to create the network from a pandas dataframe will not work 
-        # (too much memory). You'll need to read the documentation to figure out how to 
-        # load in the network in the most memory-efficient way possible. This is the 
-        # "hard part" of this class's implementation as it requires you to think about
-        # memory and data representations. 
-
-        # NOTE: your code should support reading both gzip and non-gzip formats
-
-        # NOTE: On a reference laptop, loading the network file's data took ~90 seconds
-        # and constructing the network took ~75 seconds. We estimate that the entire 
-        # network construction memory requirement is under 5GB based on tests with 
-        # the reference implementation.
-  
-        pass
+        edges = []
+        i = 0
+        if network_filename.endswith(".gz"):
+            with gzip.open(network_filename) as f:
+                data = f.readline()
+                while data:
+                    i += 1
+                    if i == 1:
+                        data = f.readline()
+                        continue
+                    data = data.strip()
+                    data = data.decode()
+                    from_node, to_node = data.split(",")
+                    edges.append((from_node, to_node))
+                    data = f.readline()
+        elif network_filename.endswith(".csv"):
+            with open(network_filename) as f: 
+                data = f.readline()
+                while data:
+                    i += 1
+                    if i == 1:
+                        data = f.readline()
+                        continue
+                    data = data.strip()
+                    from_node, to_node = data.split(",")
+                    if from_node == 'from' and to_node == 'to':
+                        continue
+                    edges.append((from_node, to_node))
+                    data = f.readline()
+        adjacency = from_edge_list(edges, directed = True)
+        return adjacency
         
+
     def calculate_page_rank(self, graph, damping_factor=0.85, iterations=100, weights=None) -> list[float]:
         """
         Calculates the PageRank scores for the provided network and
@@ -65,9 +79,13 @@ class NetworkFeatures:
         
         TODO (hw4): Note that `weights` is added as a parameter to this function for Personalized PageRank.
         """
-        # TODO (HW4): Use scikit-network to calculate and return PageRank scores; if the user has indicated
-        #  we should use Personalized PageRank, return the scores using the given weights
-        pass
+        pagerank = PageRank(damping_factor = damping_factor, n_iter = iterations)
+        if weights != None: 
+            scores = pagerank.fit_predict(graph.adjacency, weights)
+        else:
+            scores = pagerank.fit_predict(graph.adjacency)
+        
+        return scores
 
     def calculate_hits(self, graph) -> tuple[list[float], list[float]]:
         """
@@ -83,7 +101,9 @@ class NetworkFeatures:
         # TODO: Use scikit-network to run HITS and return HITS hub scores and authority scores
         # NOTE: When returning the HITS scores, the returned tuple should have the hub scores in index 0 and
         #       authority score in index 1
-        pass
+        hits = HITS()
+        hits.fit_predict(graph.adjacency)
+        return (hits.scores_col_, hits.scores_row_)
 
     def get_all_network_statistics(self, graph) -> DataFrame:
         """
@@ -99,21 +119,25 @@ class NetworkFeatures:
             A pandas DataFrame with columns 'docid', 'pagerank', 'authority_score', and 'hub_score'
             containing the relevant values for all nodes in the network
         """
+        pagerank_scores = self.calculate_page_rank(graph)
+        hub_scores, authority_scores = self.calculate_hits(graph)
 
-        # TODO: Calculate all the Pagerank and HITS scores for the network graph and store it in a dataframe
-
-        # NOTE: We use a DataFrame here for efficient storage of the values on disk.
-        # However, when you actually use these values, you'll convert this DataFrame
-        # to another dictionary-based representation for faster lookup when making
-        # the L2R features.
-
-        # NOTE: Return the dataframe and save the dataframe as a CSV or JSON
-        return df
+        df = pd.DataFrame({
+                            'docid': graph.names, 
+                            'pagerank': pagerank_scores, 
+                            'authority_score': authority_scores, 
+                            'hub_score': hub_scores
+                         })
+        return df 
 
 
-# Example main function
-if __name__ == '__main__':
+def main():
+    from document_preprocessor import RegexTokenizer
     nf = NetworkFeatures()
-    g = nf.load_network('edgelist.csv', 92650947)
+    g = nf.load_network('../edgelist.csv.gz', 92650947)
     final_df = nf.get_all_network_statistics(g)
-    final_df.to_csv('network_stats.csv', index=False)
+    final_df.to_csv('network_stats.csv', index = False)
+
+
+if __name__ == '__main__':
+    main()

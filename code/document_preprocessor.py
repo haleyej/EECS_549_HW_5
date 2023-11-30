@@ -16,7 +16,9 @@ class Tokenizer:
                 If set to 'None' no multi-word expression matching is performed.
                 No need to perform/implement multi-word expression recognition for HW3.
         """
-        # TODO: Save arguments that are needed as fields of this class
+        self.lowercase = lowercase 
+        if multiword_expressions != None:
+            self.multiword_expressions = multiword_expressions
 
     def find_and_replace_mwes(self, input_tokens: list[str]) -> list[str]:
         """
@@ -45,7 +47,9 @@ class Tokenizer:
             A list of tokens processed by lower-casing depending on the given condition
         """
         # TODO: Add support for lower-casing
-        pass
+        if self.lowercase:
+            modified_tokens = [token.lower() for token in input_tokens]
+        return modified_tokens
     
     def tokenize(self, text: str) -> list[str]:
         """
@@ -73,8 +77,23 @@ class RegexTokenizer(Tokenizer):
                 No need to perform/implement multi-word expression recognition for HW3; you can ignore this.
         """
         super().__init__(lowercase, multiword_expressions)
-        # TODO: Save a new argument that is needed as a field of this class
-        # TODO: Initialize the NLTK's RegexpTokenizer 
+        self.tokenizer = RegexpTokenizer(token_regex)
+
+    def postprocess(self, input_tokens: list[str]) -> list[str]:
+        """
+        Performs any set of optional operations to modify the tokenized list of words such as
+        lower-casing and returns the modified list of tokens.
+
+        Args:
+            input_tokens: A list of tokens
+
+        Returns:
+            A list of tokens processed by lower-casing depending on the given condition
+        """
+        # TODO: Add support for lower-casing
+        if self.lowercase:
+            modified_tokens = [token.lower() for token in input_tokens]
+        return modified_tokens
 
     def tokenize(self, text: str) -> list[str]:
         """Uses NLTK's RegexTokenizer and a regular expression pattern to tokenize a string.
@@ -85,9 +104,9 @@ class RegexTokenizer(Tokenizer):
         Returns:
             A list of tokens
         """
-        # TODO: Tokenize the given text and perform postprocessing on the list of tokens
-        #       using the postprocess function
-        pass
+        tokens = self.tokenizer.tokenize(text)
+        tokens = self.postprocess(tokens)
+        return tokens
 
 
 # TODO (HW3): Take in a doc2query model and generate queries from a piece of text
@@ -111,8 +130,10 @@ class Doc2QueryAugmenter:
             doc2query_model_name: The name of the T5 model architecture used for generating queries
         """
         self.device = torch.device('cpu')  # Do not change this unless you know what you are doing
-
-        # TODO (HW3): Create the dense tokenizer and query generation model using HuggingFace transformers
+        self.model_name = doc2query_model_name.split("/")[-1]
+        
+        self.dense_tokenizer = T5Tokenizer.from_pretrained(doc2query_model_name)
+        self.model = T5ForConditionalGeneration.from_pretrained(doc2query_model_name)
 
     def get_queries(self, document: str, n_queries: int = 5, prefix_prompt: str = '') -> list[str]:
         """
@@ -145,12 +166,17 @@ class Doc2QueryAugmenter:
         document_max_token_length = 400  # as used in OPTIONAL Reading 1
         top_p = 0.85
 
-        # NOTE: See https://huggingface.co/doc2query/msmarco-t5-base-v1 for details
+        document_max_token_length = 400
 
-        # TODO (HW3): For the given model, generate a list of queries that might reasonably be issued to search
-        #       for that document
-        # NOTE: Do not forget edge cases
-        pass
+        document = prefix_prompt + document
+        inputs = self.dense_tokenizer.encode(document, max_length = document_max_token_length + len(prefix_prompt), truncation = True, return_tensors = 'pt')
+        outputs = self.model.generate(input_ids = inputs, max_length = 100, do_sample = True, top_p = top_p, num_return_sequences = n_queries)
+
+        queries = [self.dense_tokenizer.decode(query, skip_special_tokens=True) for query in outputs]
+        return queries
+
+
+        
 
 
 # Don't forget that you can have a main function here to test anything in the file

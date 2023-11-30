@@ -1,29 +1,8 @@
-import math
-import csv
+import csv 
+import numpy as np 
 from tqdm import tqdm
 import pandas as pd
-
-
-# TODO (HW5): Implement NFaiRR
-def nfairr_score(actual_omega_values: list[int], cut_off=200) -> float:
-    """
-    Computes the normalized fairness-aware rank retrieval (NFaiRR) score for a list of omega values
-    for the list of ranked documents.
-    If all documents are from the protected class, then the NFaiRR score is 0.
-
-    Args:
-        actual_omega_values: The omega value for a ranked list of documents
-            The most relevant document is the first item in the list.
-        cut_off: The rank cut-off to use for calculating NFaiRR
-            Omega values in the list after this cut-off position are not used. The default is 200.
-
-    Returns:
-        The NFaiRR score
-    """
-    # TODO (HW5): Compute the FaiRR and IFaiRR scores using the given list of omega values
-    # TODO (HW5): Implement NFaiRR
-    pass
-
+import csv
 
 def map_score(search_result_relevances: list[int], cut_off=10) -> float:
     """
@@ -32,17 +11,28 @@ def map_score(search_result_relevances: list[int], cut_off=10) -> float:
     for whether it was relevant.
 
     Args:
-        search_result_relevances: A list of 0/1 values for whether each search result returned by your
-            ranking function is relevant
-        cut_off: The search result rank to stop calculating MAP.
-            The default cut-off is 10; calculate MAP@10 to score your ranking function.
+        search_results: A list of 0/1 values for whether each search result returned by your 
+                        ranking function is relevant
+        cut_off: The search result rank to stop calculating MAP. The default cut-off is 10;
+                 calculate MAP@10 to score your ranking function.
 
     Returns:
         The MAP score
     """
-    # TODO: Implement MAP
-    pass
+    precision = []
+    cut_off = min(len(search_result_relevances), cut_off)
+    for i in range(len(search_result_relevances[:cut_off])):
+        part = search_result_relevances[:(i + 1)]
+        if part[i] == 0:
+            precision.append(0)
+            continue
+        num_pos = part.count(1.0)
+        precision.append(num_pos / (i + 1))
 
+    if np.sum(precision) == 0:
+        return 0
+    map = np.sum(precision) / cut_off
+    return map
 
 def ndcg_score(search_result_relevances: list[float], 
                ideal_relevance_score_ordering: list[float], cut_off=10):
@@ -51,11 +41,12 @@ def ndcg_score(search_result_relevances: list[float],
     Relevance scores can be ints or floats, depending on how the data was labeled for relevance.
 
     Args:
-        search_result_relevances: A list of relevance scores for the results returned by your ranking function
-            in the order in which they were returned
-            These are the human-derived document relevance scores, *not* the model generated scores.
-        ideal_relevance_score_ordering: The list of relevance scores for results for a query, sorted by relevance score
-            in descending order
+        search_result_relevances: 
+            A list of relevance scores for the results returned by your ranking function in the
+            order in which they were returned. These are the human-derived document relevance scores,
+            *not* the model generated scores.
+            
+        ideal_relevance_score_ordering: The list of relevance scores for results for a query, sorted by relevance score in descending order.
             Use this list to calculate IDCG (Ideal DCG).
 
         cut_off: The default cut-off is 10.
@@ -63,36 +54,102 @@ def ndcg_score(search_result_relevances: list[float],
     Returns:
         The NDCG score
     """
-    # TODO: Implement NDCG
-    pass
+    actual_rating = []
+    ideal_rating = []
+    cut_off = min(len(ideal_relevance_score_ordering), len(search_result_relevances), cut_off)
+    for i in range(cut_off):
+        rating = search_result_relevances[i]
+        ideal_val = ideal_relevance_score_ordering[i]
+        if i == 0:
+            actual_rating.append(rating)
+            ideal_rating.append(ideal_val)
+        elif i > 0:
+            rating = rating / np.log2(i + 1)
+            ideal_val = ideal_val / np.log2(i + 1)
+            actual_rating.append(rating)
+            ideal_rating.append(ideal_val)
+
+    if np.sum(ideal_rating) > 0:
+        return np.sum(actual_rating) / np.sum(ideal_rating)
+    else:
+        return 0
 
 
-def run_relevance_tests(relevance_data_filename: str, ranker) -> dict[str, float]:
-    # TODO: Implement running relevance test for the search system for multiple queries.
+def map_queries_to_judgements(relevance_data_filename:str) -> dict[str, list[tuple[int]]]:
+    with open(relevance_data_filename) as f:
+            reader = csv.reader(f)
+            queries_to_judgements = {}
+            header = next(reader)
+            query_idx = header.index('query')
+            rel_idx = header.index('rel')
+            docid_idx= header.index('docid')
+            for line in tqdm(reader): 
+                query = line[query_idx]
+                rel = int(line[rel_idx])
+                docid = int(line[docid_idx])
+                queries_to_judgements[query] = queries_to_judgements.get(query, []) + [(docid, rel)]
+    return queries_to_judgements
+
+
+def run_relevance_tests(queries_to_judgements: dict, outfile:str, ranker, cutoff:int = 10) -> dict[str, float]:
     """
     Measures the performance of the IR system using metrics, such as MAP and NDCG.
     
     Args:
-        relevance_data_filename: The filename containing the relevance data to be loaded
+        relevance_data_filename [str]: The filename containing the relevance data to be loaded
+
         ranker: A ranker configured with a particular scoring function to search through the document collection.
-            This is probably either a Ranker or a L2RRanker object, but something that has a query() method.
+                This is probably either a Ranker or a L2RRanker object, but something that has a query() method
 
     Returns:
         A dictionary containing both MAP and NDCG scores
     """
-    # TODO: Load the relevance dataset
+    maps = []
+    ncdgs = []
+    for query, relevance_ratings in tqdm(list(queries_to_judgements.items())):
+        search_results = ranker.query(query)
+        map_relevance_scores = []
+        ndcg_relevance_scores = []
+        # add zero for ones 
+        if len(search_results) == 0:
+            maps.append(0)
+            ncdgs.append(0)
+            continue
+        for result in search_results[:cutoff]:
+            if len(result) == 0:
+                continue
+            result_docid = result[0]
+            found = False
+            for tup in tqdm(relevance_ratings):
+                docid, rel  = tup
+                if int(docid) == int(result_docid):
+                    found = True
+                    if int(rel) >= 4:
+                        map_relevance_scores.append(1)
+                        ndcg_relevance_scores.append(1)
+                        break
+                    else:
+                        map_relevance_scores.append(0)
+                        ndcg_relevance_scores.append(0)
+                        break
+            if not found:
+                map_relevance_scores.append(0)
+                ndcg_relevance_scores.append(0)
 
-    # TODO: Run each of the dataset's queries through your ranking function
+        map = map_score(map_relevance_scores, cutoff)
+        ncdg = ndcg_score(map_relevance_scores, sorted(ndcg_relevance_scores, reverse = True), cutoff)
 
-    # TODO: For each query's result, calculate the MAP and NDCG for every single query and average them out
+        maps.append(map)
+        ncdgs.append(ncdg)
 
-    # NOTE: MAP requires using binary judgments of relevant (1) or not (0). You should use relevance 
-    #       scores of (1,2,3) as not-relevant, and (4,5) as relevant.
+        with open(outfile, "a") as e:
+            writer = csv.writer(e, delimiter=",")
+            r1 = [query, 'map', map]
+            r2 = [query, 'ndcg', ncdg]
+            writer.writerow(r1)
+            writer.writerow(r2)
+    return {'map': np.mean(maps), 'ndcg': np.mean(ncdgs)}
 
-    # NOTE: NDCG can use any scoring range, so no conversion is needed.
-  
-    # TODO: Compute the average MAP and NDCG across all queries and return the scores
-    return {'map': 0, 'ndcg': 0}
 
 
 # TODO (HW5): Implement NFaiRR metric for a list of queries to measure fairness for those queries
@@ -114,14 +171,47 @@ def run_fairness_test(attributes_file_path: str, protected_class: str, queries: 
     """
     # TODO (HW5): Load person-attributes.csv
 
-    # TODO (HW5): Find the documents associated with the protected class
+    doc_to_attributes = {}
+    attribute_docs = []
+    with open(attributes_file_path, 'r') as f:
+        #Ethnicity,Gender,Religious_Affiliation,Political_Party,docid
+        reader = csv.reader(f)
+        attribute_idx = reader.index(protected_class)
+        reader = next(reader)
+        for row in reader:
+            docid = row[-1]
+            doc_to_attributes[docid] = row[:-1]
+            attribute_docs.append(row[attribute_idx])
 
-    score = []
+    scores = []
+    for query in tqdm(queries):
+        results = ranker.query(query)
+        if len(results) == 0:
+            #SOMETHING HERE 
+            continue 
+        end = min(cut_off, len(results))  
+        for i, result in enumerate(results[:end]): 
+            if len(result) == 0:
+                continue 
+            docid = result[0]
+            result_attributes = doc_to_attributes[docid]
+            if result_attributes is not None: 
+                score = 1 / np.log(i + 1)
+                scores.append(score)
+            else:
+                scores.append(0)
+
+    return np.sum(scores)
+
+        
+                
+
+
+    # TODO (HW5): Find the documents associated with the protected class
 
     # TODO (HW5): Loop through the queries and
     #       1. Create the list of omega values for the ranked list.
     #       2. Compute the NFaiRR score
     # NOTE: This fairness metric has some 'issues' (and the assignment spec asks you to think about it)
 
-    pass
     
