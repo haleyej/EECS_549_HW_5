@@ -84,14 +84,18 @@ class VectorRanker(Ranker):
         Returns:
             A matrix where element [i][j] is a similarity score between list_docs[i] and list_docs[j]
         """
-        dot_scores = []
-        for doc_1 in list_docs:
-            for doc_2 in list_docs:
-                doc_1_embed = self.mapping[doc_1]
-                doc_2_embed = self.mapping[doc_2]
-                dot_score = util.dot_score(doc_1_embed, doc_2_embed)[0].cpu().tolist()
-                dot_scores.append(dot_score[0])
-        return np.array(dot_scores).reshape(len(list_docs), len(list_docs))
+        matrix = np.eye(len(list_docs))
+        for i in range(len(list_docs)):
+            for j in range(len(list_docs)):
+                if i != j:
+                    doc_1_embed = self.mapping[list_docs[i]]
+                    doc_2_embed = self.mapping[list_docs[j]]
+
+                    dot_score = util.dot_score(doc_1_embed, doc_2_embed)[0].cpu().tolist()
+                    
+                    matrix[i, j]  = dot_score[0]
+                    matrix[j, i] = dot_score[0]
+        return matrix
 
         
 
