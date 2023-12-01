@@ -87,7 +87,7 @@ class VectorRanker(Ranker):
         matrix = np.eye(len(list_docs))
         for i in range(len(list_docs)):
             for j in range(len(list_docs)):
-                if i != j:
+                if i != j and matrix[i, j] == 0 and matrix[j, i] == 0:
                     doc_1_embed = self.mapping[list_docs[i]]
                     doc_2_embed = self.mapping[list_docs[j]]
 
