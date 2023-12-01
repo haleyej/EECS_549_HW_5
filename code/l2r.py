@@ -197,30 +197,28 @@ class L2RRanker:
         S = []
         R = thresholded_search_results.copy()
 
-        while len(list_docs) > 0:
-            top_mmr_score = 0
+        while len(R) > 0:
+            top_mmr_score = -1e2000000000
             top_mmr_docid = None
             top_mmr_tup = tuple()
-            for i, tup in enumerate(R):
+            for tup in R:
                 docid, rel_score = tup
                 max_sim = 0
-                for j in S: 
-                    for j, result in enumerate(S): 
-                        sim = similarity_matrix[i, j]
-                        if sim > max_sim:
-                            max_sim = sim
+                doc_index = list_docs.index(docid)
+                for result in S: 
+                    result_idx = list_docs.index(result[0])
+                    sim = similarity_matrix[doc_index, result_idx]
+                    if sim > max_sim:
+                        max_sim = sim
                 mmr_score = (mmr_lambda * rel_score) - ((1 - mmr_lambda) * max_sim)
-                print('CURRENT MMR SCORE', mmr_score)
                 if mmr_score > top_mmr_score:
                     top_mmr_score = mmr_score
                     top_mmr_docid = docid
                     top_mmr_tup = tup
 
-            print('TOP MMR DOC', top_mmr_docid)
-            S.append((top_mmr_docid, top_mmr_score))
             if top_mmr_docid ==  None: 
                 return S
-            list_docs.remove(top_mmr_docid)
+            S.append((top_mmr_docid, top_mmr_score))
             R.remove(top_mmr_tup)
 
         return S
@@ -318,6 +316,7 @@ class L2RRanker:
             mmr_results = self.maximize_mmr(combined_results[:mmr_threshold], similarity_matrix, mmr_docs, mmr_lambda)
 
             results = mmr_results + combined_results[mmr_threshold:]
+            results = sorted(results, key = lambda s: s[0], reverse = True)
             return results
 
         
