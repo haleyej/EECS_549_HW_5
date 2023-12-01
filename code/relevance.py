@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 import pandas as pd
 import csv
+import math
 
 def map_score(search_result_relevances: list[int], cut_off=10) -> float:
     """
@@ -152,6 +153,44 @@ def run_relevance_tests(queries_to_judgements: dict, outfile:str, ranker, cutoff
 
 
 
+def nfairr_score(omega_values:list[int], cutoff:int) -> float:
+    ideal_scores = []
+    actual_scores = []
+    cutoff = min(len(omega_values), cutoff)
+    ideal_omega_values = sorted(omega_values[:cutoff], reverse = True)
+    for i in range(cutoff):
+        actual_i = omega_values[i]
+        ideal_i = ideal_omega_values[i]
+
+        if i == 0:
+            actual_scores.append(1)
+        else:
+            actual_score = 1 / math.log2((i-1) + 2)
+            actual_scores.append(actual_score * actual_i)
+  
+
+        if i == 0:
+            ideal_scores.append(1)
+        else:
+            ideal_score = 1 / math.log2((i-1) + 2)
+            ideal_scores.append(ideal_score * ideal_i)
+    
+    print(actual_scores)
+    print(ideal_scores)
+
+    fairr = np.sum(actual_scores)
+    ifairr = np.sum(ideal_scores)
+
+    print(fairr)
+    print(ifairr)
+    print('')
+
+    if ifairr == 0:
+        return 0
+    return fairr / ifairr
+
+
+
 # TODO (HW5): Implement NFaiRR metric for a list of queries to measure fairness for those queries
 # NOTE: This has no relation to relevance scores and measures fairness of representation of classes
 def run_fairness_test(attributes_file_path: str, protected_class: str, queries: list[str],
@@ -183,7 +222,8 @@ def run_fairness_test(attributes_file_path: str, protected_class: str, queries: 
             doc_to_attributes[docid] = row[:-1]
             attribute_docs.append(row[attribute_idx])
 
-    scores = []
+
+    omegas = []
     for query in tqdm(queries):
         results = ranker.query(query)
         if len(results) == 0:
@@ -196,14 +236,21 @@ def run_fairness_test(attributes_file_path: str, protected_class: str, queries: 
             docid = result[0]
             result_attributes = doc_to_attributes[docid]
             if result_attributes is not None: 
-                score = 1 / np.log(i + 1)
-                scores.append(score)
+                omegas.append(1)
             else:
-                scores.append(0)
-
-    return np.sum(scores)
+                omegas.append(0)
+    
+    score = nfairr_score(omegas, cut_off)
+    return score
 
         
+
+def main():
+   s= nfairr_score([1, 0, 0, 1, 0, 0, 0, 1, 0, 0], 2) 
+   print(s)
+
+if __name__ == "__main__":
+    main()
                 
 
 
