@@ -7,6 +7,8 @@ from collections import defaultdict, Counter
 import numpy as np
 from document_preprocessor import Tokenizer
 from ranker import Ranker, TF_IDF, BM25, PivotedNormalization, CrossEncoderScorer
+from vector_ranker import VectorRanker
+import csv
 
 
 # TODO: scorer has been replaced with ranker in initialization, check README for more details
@@ -28,7 +30,13 @@ class L2RRanker:
         # TODO: Save any new arguments that are needed as fields of this class
 
         # TODO: Initialize the LambdaMART model (but don't train it yet)
-        pass
+        self.doc_index = document_index 
+        self.title_index = title_index 
+        self.document_preprocessor = document_preprocessor
+        self.stopwords = stopwords 
+        self.ranker = ranker
+        self.feature_extractor = feature_extractor
+        self.model = LambdaMART()
                    
     def prepare_training_data(self, query_to_document_relevance_scores: dict[str, list[tuple[int, int]]]):
         """
@@ -51,6 +59,22 @@ class L2RRanker:
         y = []
         qgroups = []
 
+        for query, ratings in list(query_to_document_relevance_scores.items()):
+            query_parts = set(self.document_preprocessor.tokenize(query))
+            title_counts = self.accumulate_doc_term_counts(self.title_index, query_parts)
+            doc_counts = self.accumulate_doc_term_counts(self.doc_index, query_parts)
+
+            qgroups.append(len(ratings))
+            for rating in tqdm(ratings): 
+                docid, relevance = rating 
+                doc_count = doc_counts[docid]
+                title_count = title_counts[docid]
+                features = self.feature_extractor.generate_features(docid, doc_count, title_count, query_parts, query)
+                X.append(features)
+                y.append(relevance)
+                
+        return X, y, qgroups
+
         # TODO: For each query and the documents that have been rated for relevance to that query,
         #       process these query-document pairs into features
 
@@ -60,8 +84,6 @@ class L2RRanker:
             #       the features and relevance score to the lists to be returned
 
             # Make sure to keep track of how many scores we have for this query
-
-        return X, y, qgroups
 
     @staticmethod
     def accumulate_doc_term_counts(index: InvertedIndex, query_parts: list[str]) -> dict[int, dict[str, int]]:
@@ -80,7 +102,18 @@ class L2RRanker:
         """
         # TODO: Retrieve the set of documents that have each query word (i.e., the postings) and
         #       create a dictionary that keeps track of their counts for the query word
-        pass
+        term_freqs = defaultdict(lambda : {})
+
+        query_parts = set(query_parts)
+        for part in query_parts: 
+            postings = index.get_postings(part)
+            if postings == None or len(postings) == 0:
+                break
+            for posting in postings: 
+                docid = posting[0]
+                count = posting[1]
+                term_freqs[docid].update({part: count})
+        return term_freqs
 
     def train(self, training_data_filename: str) -> None:
         """
@@ -96,6 +129,24 @@ class L2RRanker:
         #       getting the necessary datastructures
         
         # TODO: Train the model
+        query_doc_pairs = {}
+        with open(training_data_filename) as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            query_idx = header.index("query")
+            docid_idx = header.index("docid")
+            rel_idx = header.index("rel")
+            for doc in tqdm(reader):
+                query = doc[query_idx]
+                docid = int(doc[docid_idx])
+                rel = int(doc[rel_idx])
+                curr = query_doc_pairs.get(query, [])
+                curr.append((docid, rel))
+                query_doc_pairs[query] = curr 
+        X, y, qgroups = self.prepare_training_data(query_doc_pairs) 
+
+        tqdm(self.model.fit(X, y, qgroups))
+
 
     def predict(self, X):
         """
@@ -112,7 +163,9 @@ class L2RRanker:
             ValueError: If the model has not been trained yet.
         """
         # TODO: Return a prediction made using the LambdaMART model
-        pass
+        if self.model is None:
+            raise ValueError("Model has not been trained yet.")
+        return self.model.predict(X)
 
     # TODO (HW5): Implement MMR diversification for a given list of documents and their cosine similarity scores
     @staticmethod
@@ -142,6 +195,33 @@ class L2RRanker:
         #       4. Repeat 2 & 3 until there are no more remaining elements in R to be processed
 
         S = []
+        R = thresholded_search_results.copy()
+
+        while len(list_docs) > 0:
+            top_mmr_score = 0
+            top_mmr_docid = None
+            top_mmr_tup = tuple()
+            for i, tup in enumerate(R):
+                docid, rel_score = tup
+                max_sim = 0
+                for j in S: 
+                    for j, result in enumerate(S): 
+                        sim = similarity_matrix[i, j]
+                        if sim > max_sim:
+                            max_sim = sim
+                mmr_score = (mmr_lambda * rel_score) - ((1 - mmr_lambda) * max_sim)
+                print('CURRENT MMR SCORE', mmr_score)
+                if mmr_score > top_mmr_score:
+                    top_mmr_score = mmr_score
+                    top_mmr_docid = docid
+                    top_mmr_tup = tup
+
+            print('TOP MMR DOC', top_mmr_docid)
+            S.append((top_mmr_docid, top_mmr_score))
+            if top_mmr_docid ==  None: 
+                return S
+            list_docs.remove(top_mmr_docid)
+            R.remove(top_mmr_tup)
 
         return S
     
@@ -204,7 +284,44 @@ class L2RRanker:
         # TODO (HW5): Add the remaining search results back to the MMR diversification results
         
         # TODO: Return the ranked documents
-        pass
+        query_parts = self.document_preprocessor.tokenize(query)
+        query_parts = [part for part in query_parts if part not in self.stopwords or part != None]
+        doc_word_counts = self.accumulate_doc_term_counts(self.doc_index, query_parts)
+        candidates = set(list(doc_word_counts.keys()))
+        title_word_counts = self.accumulate_doc_term_counts(self.title_index, query_parts)
+        title_word_counts =  {k:v for k,v in title_word_counts.items() if k in candidates}
+
+        scores = self.ranker.query(query, pseudofeedback_num_docs, pseudofeedback_alpha, pseudofeedback_beta, user_id)
+        candidates_and_scores = sorted(scores, key = lambda s: s[1], reverse = True)
+
+        if len(candidates_and_scores) > 100:
+            rerank = candidates_and_scores[:100]
+        else:
+            rerank = candidates_and_scores.copy()
+
+        docs_to_predictions = []
+        for docid, _ in tqdm(rerank):
+            doc_word_count = doc_word_counts.get(docid, {})
+            title_word_count = title_word_counts.get(docid, {})
+            feature_vec = self.feature_extractor.generate_features(docid, doc_word_count, title_word_count, query_parts, query)
+            prediction = self.model.predict(np.array(feature_vec).reshape(1, -1))[0]
+            docs_to_predictions.append((docid, prediction))
+
+
+        sorted_predictions = sorted(docs_to_predictions, key = lambda s: s[1], reverse = True)
+        
+        combined_results = sorted_predictions + [(d, s) for d, s in candidates_and_scores[100:]]
+
+        if mmr_threshold > 0:
+            mmr_docs = [d for d, s in combined_results[:mmr_threshold]]
+            similarity_matrix = self.ranker.document_similarity(mmr_docs)
+            mmr_results = self.maximize_mmr(combined_results[:mmr_threshold], similarity_matrix, mmr_docs, mmr_lambda)
+
+            results = mmr_results + combined_results[mmr_threshold:]
+            return results
+
+        
+        return combined_results
 
 
 class L2RFeatureExtractor:
@@ -229,13 +346,20 @@ class L2RFeatureExtractor:
                 and values with the scores for those features
             ce_scorer: The CrossEncoderScorer object
         """
-        # TODO: Set the initial state using the arguments
+        self.doc_index = document_index 
+        self.title_index = title_index 
+        self.doc_category_info = doc_category_info 
+        self.document_preprocessor = document_preprocessor
+        self.stopwords = stopwords
+        self.recognized_categories = recognized_categories
+        self.docid_to_network_features = docid_to_network_features
 
-        # TODO: For the recognized categories (i.e,. those that are going to be features), consider
-        #       how you want to store them here for faster featurizing
-
-        # TODO (HW2): Initialize any RelevanceScorer objects you need to support the methods below.
-        #             Be sure to use the right InvertedIndex object when scoring
+        #scorers 
+        self.BM25 = BM25(self.doc_index)
+        self.pivoted_norm = PivotedNormalization(self.doc_index)
+        self.doc_tf_idf = TF_IDF(self.doc_index)
+        self.title_tf_idf = TF_IDF(self.title_index)
+        self.ce_scorer = ce_scorer
 
     # TODO: Article Length
     def get_article_length(self, docid: int) -> int:
@@ -248,7 +372,7 @@ class L2RFeatureExtractor:
         Returns:
             The length of a document
         """
-        pass
+        return self.doc_index.get_doc_metadata(docid)['total_token_count']
 
     # TODO: Title Length
     def get_title_length(self, docid: int) -> int:
@@ -261,7 +385,7 @@ class L2RFeatureExtractor:
         Returns:
             The length of a document's title
         """
-        pass
+        return self.title_index.get_doc_metadata(docid)['total_token_count']
 
     # TODO: TF
     def get_tf(self, index: InvertedIndex, docid: int, word_counts: dict[str, int], query_parts: list[str]) -> float:
@@ -277,7 +401,13 @@ class L2RFeatureExtractor:
         Returns:
             The TF score
         """
-        pass
+        scores = []
+        mutual_terms = set(query_parts) & set(word_counts.keys()) 
+        for term in mutual_terms:
+            tf = word_counts[term]
+            scores.append(np.log(tf + 1))
+        score = np.sum(scores)
+        return score
 
     # TODO: TF-IDF
     def get_tf_idf(self, index: InvertedIndex, docid: int,
@@ -294,7 +424,11 @@ class L2RFeatureExtractor:
         Returns:
             The TF-IDF score
         """
-        pass
+        query_word_counts = Counter(query_parts)
+        if index == self.title_index: 
+            return self.title_tf_idf.score(docid, word_counts, query_word_counts)
+        elif index == self.doc_index:
+            return self.doc_tf_idf.score(docid, word_counts, query_word_counts)
 
     # TODO: BM25
     def get_BM25_score(self, docid: int, doc_word_counts: dict[str, int],
@@ -310,8 +444,8 @@ class L2RFeatureExtractor:
         Returns:
             The BM25 score
         """
-        # TODO: Calculate the BM25 score and return it
-        pass
+        query_word_counts = Counter(query_parts)
+        return self.BM25.score(docid, doc_word_counts, query_word_counts)
 
     # TODO: Pivoted Normalization
     def get_pivoted_normalization_score(self, docid: int, doc_word_counts: dict[str, int],
@@ -327,8 +461,8 @@ class L2RFeatureExtractor:
         Returns:
             The pivoted normalization score
         """
-        # TODO: Calculate the pivoted normalization score and return it
-        pass
+        query_word_counts = Counter(query_parts)
+        return self.pivoted_norm.score(docid, doc_word_counts, query_word_counts)
 
     # TODO: Document Categories
     def get_document_categories(self, docid: int) -> list:
@@ -344,9 +478,15 @@ class L2RFeatureExtractor:
         Returns:
             A list containing binary list of which recognized categories that the given document has
         """
-        pass
+        category_vec = []
+        doc_categories = self.doc_category_info.get(docid, [])
+        for category in self.recognized_categories:
+            if category in doc_categories:
+                category_vec.append(1)
+            else:
+                category_vec.append(0)
+        return category_vec
 
-    # TODO: PageRank
     def get_pagerank_score(self, docid: int) -> float:
         """
         Gets the PageRank score for the given document.
@@ -357,7 +497,10 @@ class L2RFeatureExtractor:
         Returns:
             The PageRank score
         """
-        pass
+        network_features = self.docid_to_network_features.get(docid, {})
+        if len(network_features) == 0:
+            return 0
+        return network_features['pagerank']
 
     # TODO: HITS Hub
     def get_hits_hub_score(self, docid: int) -> float:
@@ -370,7 +513,10 @@ class L2RFeatureExtractor:
         Returns:
             The HITS hub score
         """
-        pass
+        network_features = self.docid_to_network_features.get(docid, {})
+        if len(network_features) == 0:
+            return 0
+        return network_features['hub_score']
 
     # TODO: HITS Authority
     def get_hits_authority_score(self, docid: int) -> float:
@@ -383,7 +529,10 @@ class L2RFeatureExtractor:
         Returns:
             The HITS authority score
         """
-        pass
+        network_features = self.docid_to_network_features.get(docid, {})
+        if len(network_features) == 0:
+            return 0
+        return network_features['authority_score']
 
     # TODO (HW3): Cross-Encoder Score
     def get_cross_encoder_score(self, docid: int, query: str) -> float:
@@ -397,9 +546,10 @@ class L2RFeatureExtractor:
         Returns:
             The Cross-Encoder score
         """        
-        pass
+        return self.ce_scorer.score(docid, query)
 
     # TODO: Add at least one new feature to be used with your L2R model
+
     def generate_features(self, docid: int, doc_word_counts: dict[str, int],
                           title_word_counts: dict[str, int], query_parts: list[str],
                           query: str) -> list:
@@ -421,39 +571,63 @@ class L2RFeatureExtractor:
         # NOTE: We can use this to get a stable ordering of features based on consistent insertion
         #       but it's probably faster to use a list to start
 
-        feature_vector = []
+        doc_metadata = self.doc_index.get_doc_metadata(docid)
+        if len(doc_metadata) == 0:
+            doc_len = 0
+        else:
+            doc_len = doc_metadata['total_token_count']
+        
+        title_metadata = self.title_index.get_doc_metadata(docid)
+        if len(title_metadata) == 0:
+            title_len = 0
+        else:
+            title_len = title_metadata['total_token_count']
 
-        # TODO: Document Length
+        query_len = len(query_parts)
 
-        # TODO: Title Length
+        doc_tf = self.get_tf(self.doc_index, docid, doc_word_counts, query_parts)
 
-        # TODO: Query Length
+        doc_tf_idf = self.get_tf_idf(self.doc_index, docid, doc_word_counts, query_parts)
+        
+        title_tf = self.get_tf(self.title_index, docid, title_word_counts, query_parts)
 
-        # TODO: TF (document)
+        title_tf_idf = self.get_tf_idf(self.title_index, docid, title_word_counts, query_parts)
+        
+        doc_bm25 = self.get_BM25_score(docid, doc_word_counts, query_parts)
 
-        # TODO: TF-IDF (document)
+        doc_pivoted_norm = self.get_pivoted_normalization_score(docid, doc_word_counts, query_parts)
 
-        # TODO: TF (title)
+        doc_page_rank = self.get_pagerank_score(docid)
 
-        # TODO: TF-IDF (title)
+        doc_hub_score = self.get_hits_hub_score(docid)
 
-        # TODO: BM25
+        doc_authority_score = self.get_hits_authority_score(docid)
 
-        # TODO: Pivoted Normalization
+        doc_cross_encoder_score = self.get_cross_encoder_score(docid, query)
 
-        # TODO: PageRank
+        if len(doc_metadata) == 0:
+            uniquenes_ratio = 0
+        else:
+            uniquenes_ratio = doc_metadata['num_unique_tokens'] / doc_metadata['total_token_count']
+ 
+        doc_categories = self.get_document_categories(docid)  
 
-        # TODO: HITS Hub
+        feature_vector = [doc_len, 
+                          title_len, 
+                          query_len,
+                          doc_tf, 
+                          doc_tf_idf, 
+                          title_tf, 
+                          title_tf_idf, 
+                          doc_bm25, 
+                          doc_pivoted_norm, 
+                          doc_page_rank, 
+                          doc_hub_score, 
+                          doc_authority_score,
+                          doc_cross_encoder_score,
+                          uniquenes_ratio] 
 
-        # TODO: HITS Authority
-
-        # TODO: Cross-Encoder Score
-
-        # TODO: Add at least one new feature to be used with your L2R model
-
-        # TODO: Document Categories
-        #       This should be a list of binary values indicating which categories are present
-
+        feature_vector.extend(doc_categories)
         return feature_vector
 
 
@@ -483,7 +657,16 @@ class LambdaMART:
         if params:
             default_params.update(params)
 
-        # TODO: Initialize the LGBMRanker with the provided parameters and assign as a field of this class
+        self.model = lightgbm.LGBMRanker(boosting_type = default_params['boosting_type'], 
+                                         num_leaves = default_params['num_leaves'],
+                                         max_depth = default_params['max_depth'],
+                                         learning_rate = default_params['learning_rate'],
+                                         n_estimators = default_params['n_estimators'],
+                                         objective = default_params['objective'],
+                                         n_jobs = default_params['n_jobs'],
+                                         importance_type = default_params['importance_type'],
+                                         metric = default_params['metric']
+                                         )
   
     def fit(self, X_train, y_train, qgroups_train):
         """
@@ -498,6 +681,7 @@ class LambdaMART:
             self: Returns the instance itself
         """
         # TODO: Fit the LGBMRanker's parameters using the provided features and labels
+        self.model.fit(X_train, y_train, group = qgroups_train)
         return self
 
     def predict(self, featurized_docs):
@@ -512,6 +696,6 @@ class LambdaMART:
         Returns:
             array-like: The estimated ranking for each document (unsorted)
         """
-        # TODO: Generate the predicted values using the LGBMRanker
-        pass
+
+        return self.model.predict(featurized_docs)
 
