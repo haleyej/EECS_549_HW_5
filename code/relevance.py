@@ -92,7 +92,9 @@ def map_queries_to_judgements(relevance_data_filename:str) -> dict[str, list[tup
     return queries_to_judgements
 
 
-def run_relevance_tests(queries_to_judgements: dict, outfile:str, ranker, cutoff:int = 10) -> dict[str, float]:
+def run_relevance_tests(queries_to_judgements: dict, outfile:str, ranker, cutoff:int = 10, 
+                        pseudofeedback_num_docs = 0, pseudofeedback_alpha = 0.8, pseudofeedback_beta = 0.2, 
+                        user_id = None, mmr_lambda:int = 1, mmr_threshold:int = 100) -> dict[str, float]:
     """
     Measures the performance of the IR system using metrics, such as MAP and NDCG.
     
@@ -108,7 +110,8 @@ def run_relevance_tests(queries_to_judgements: dict, outfile:str, ranker, cutoff
     maps = []
     ncdgs = []
     for query, relevance_ratings in tqdm(list(queries_to_judgements.items())):
-        search_results = ranker.query(query)
+        search_results = ranker.query(query, pseudofeedback_num_docs, pseudofeedback_alpha,
+                                      pseudofeedback_beta, user_id, mmr_lambda, mmr_threshold)
         map_relevance_scores = []
         ndcg_relevance_scores = []
         # add zero for ones 
