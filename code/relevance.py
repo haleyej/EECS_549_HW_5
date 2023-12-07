@@ -5,6 +5,9 @@ import pandas as pd
 import csv
 import math
 
+from l2r import L2RRanker
+from ranker import Ranker
+
 def map_score(search_result_relevances: list[int], cut_off=10) -> float:
     """
     Calculates the mean average precision score given a list of labeled search results, where
@@ -110,8 +113,14 @@ def run_relevance_tests(queries_to_judgements: dict, outfile:str, ranker, cutoff
     maps = []
     ncdgs = []
     for query, relevance_ratings in tqdm(list(queries_to_judgements.items())):
-        search_results = ranker.query(query, pseudofeedback_num_docs, pseudofeedback_alpha,
-                                      pseudofeedback_beta, user_id, mmr_lambda, mmr_threshold)
+
+        if type(ranker) == L2RRanker: 
+            search_results = ranker.query(query, pseudofeedback_num_docs, pseudofeedback_alpha,
+                                          pseudofeedback_beta, user_id, mmr_lambda, mmr_threshold)
+        elif type(ranker) == Ranker:
+            search_results = ranker.query(query, pseudofeedback_num_docs, pseudofeedback_alpha, pseudofeedback_beta)
+        
+    
         map_relevance_scores = []
         ndcg_relevance_scores = []
         # add zero for ones 
