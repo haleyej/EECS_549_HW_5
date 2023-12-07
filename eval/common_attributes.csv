@@ -1,0 +1,38 @@
+attribute_label,attribute_value,n_occurences
+ethnicity,African Americans,947
+ethnicity,Jewish people,181
+ethnicity,Germans,90
+ethnicity,English people,89
+ethnicity,French,80
+ethnicity,American Jews,72
+ethnicity,Italians,55
+ethnicity,Greeks,54
+ethnicity,Serbs,46
+ethnicity,Arabs,42
+gender,male,10182
+gender,female,1976
+gender,trans woman,10
+gender,non-binary,3
+gender,genderfluid,2
+gender,cisgender man,1
+gender,male organism,1
+religion,Catholic Church,868
+religion,Islam,756
+religion,atheism,625
+religion,Catholicism,606
+religion,Hinduism,513
+religion,Judaism,367
+religion,Christianity,315
+religion,Lutheranism,227
+religion,Anglicanism,194
+religion,Sunni Islam,177
+politics,Democratic Party,1248
+politics,Republican Party,1144
+politics,Conservative Party,272
+politics,Labour Party,168
+politics,Indian National Congress,165
+politics,Bharatiya Janata Party,145
+politics,Communist Party of the Soviet Union,93
+politics,Nazi Party,92
+politics,Chinese Communist Party,88
+politics,Liberal Party,80
