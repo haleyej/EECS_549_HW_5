@@ -198,7 +198,7 @@ class L2RRanker:
         R = thresholded_search_results.copy()
 
         while len(R) > 0:
-            top_mmr_score = -1e2000000000
+            top_mmr_score = -1e20000000000000000000000000
             top_mmr_docid = None
             top_mmr_tup = tuple()
             for tup in R:
@@ -310,13 +310,13 @@ class L2RRanker:
         
         combined_results = sorted_predictions + [(d, s) for d, s in candidates_and_scores[100:]]
 
-        if mmr_threshold > 0:
+        if mmr_threshold > 0 and hasattr(self.ranker, 'document_similarity'):
             mmr_docs = [d for d, s in combined_results[:mmr_threshold]]
             similarity_matrix = self.ranker.document_similarity(mmr_docs)
             mmr_results = self.maximize_mmr(combined_results[:mmr_threshold], similarity_matrix, mmr_docs, mmr_lambda)
 
             results = mmr_results + combined_results[mmr_threshold:]
-            results = sorted(results, key = lambda s: s[0], reverse = True)
+            results = sorted(results, key = lambda s: s[1], reverse = True)
             return results
 
         
